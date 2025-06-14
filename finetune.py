@@ -8,7 +8,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 if __name__ == "__main__":
     dataroot = "/root/cvg/project/wcy/project/Janus_IFT/flickr30k"
-    model_path = "/root/cvg/project/wcy/project/Janus_IFT/checkpoints/janus_1_3b"
+    model_path = "/root/cvg/project/wcy/project/Janus_IFT/checkpoints/janus_7b"
     vl_chat_processor: VLChatProcessor = VLChatProcessor.from_pretrained(model_path)
     tokenizer = vl_chat_processor.tokenizer
 
@@ -25,19 +25,16 @@ if __name__ == "__main__":
         bias="none"  
     )  
 
-    pl_module = JanusWarpper(vl_gpt, vl_chat_processor, lora_config, lr=0.00004)
+    pl_module = JanusWarpper(vl_gpt, vl_chat_processor, lora_config, lr=0.00004, feature_extractor_weights_path="../checkpoints/inceptionv3/inceptionv3.pth")
     datamodule = FlickrWarpper(dataroot, batch_size=12)
 
     trainer = Trainer(
                       precision="bf16",
-                      callbacks=[
-                          ModelCheckpoint(monitor='val/loss', dirpath='exp', filename='janus-flickr-{step:05d}-{val_loss:.2f}')
-                      ],
-                      max_epochs=2,
-                      max_steps=4,
+                      max_epochs=10000,
+                      max_steps=200_000,
                       logger=True,
-                      val_check_interval=2,
+                      val_check_interval=2000,
                       enable_checkpointing=True,
-                      accumulate_grad_batches=1,
+                      accumulate_grad_batches=2,
                       )
     trainer.fit(pl_module, datamodule)

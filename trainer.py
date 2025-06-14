@@ -94,7 +94,8 @@ class FlickrDataset(Dataset):
             Resize(resolution),
             CenterCrop(resolution),
             ToTensor(),
-            Normalize(0.5, 0.5) 
+            Normalize([0.48145466, 0.4578275, 0.40821073], 
+                      [0.26862954, 0.26130258, 0.27577711]) 
         ])
 
     def __getitem__(self, index):
@@ -173,7 +174,7 @@ class JanusWarpper(PL.LightningModule):
         self.model.gen_head.requires_grad_(True)
         self.model.gen_embed.requires_grad_(True)
 
-        self.fid_comp = FrechetInceptionDistance(feature=64,
+        self.fid_comp = FrechetInceptionDistance(feature=768,
                                        feature_extractor_weights_path=feature_extractor_weights_path)
 
     @torch.no_grad() 
@@ -195,7 +196,7 @@ class JanusWarpper(PL.LightningModule):
             sft_format=self.tokenizer.sft_format,
             system_prompt="",
         )
-        prompt = sft_format + self.tokenizer.image_start_tag
+        prompt = sft_format + self.tokenizer.image_start_tag + self.tokenizer.image_end_tag
         return prompt
 
     @torch.no_grad()
@@ -223,18 +224,26 @@ class JanusWarpper(PL.LightningModule):
         max_len = max(lengths) + self.img_token_num
         embed_dim = img_embeds.shape[-1]
         inputs_embeds = torch.zeros(b, max_len, embed_dim, device = img_embeds.device, dtype=img_embeds.dtype)
+        attention_mask = torch.zeros(b, max_len, device = img_embeds.device, dtype=torch.bool)
         for i in range(b):
             text_embeds = self.model.language_model.get_input_embeddings()(text_token[i].to(img_embeds.device))
             text_seqlen = text_embeds.shape[0]
-            inputs_embeds[i, 0:text_seqlen] = text_embeds
-            inputs_embeds[i, text_seqlen: text_seqlen+self.img_token_num] = img_embeds[i]
-        outputs = self.model.language_model.model(inputs_embeds=inputs_embeds, use_cache=False, past_key_values= None)
+            inputs_embeds[i, 0:text_seqlen - 1] = text_embeds[:-1]
+            inputs_embeds[i, text_seqlen - 1: text_seqlen - 1 +self.img_token_num] = img_embeds[i]
+            inputs_embeds[i, text_seqlen - 1 + self.img_token_num] = text_embeds[-1]
+            attention_mask[i, :text_seqlen + self.img_token_num] = True
+        position_ids = torch.arange(0, max_len).unsqueeze(0).to(device=img_embeds.device, dtype = torch.long)
+        outputs = self.model.language_model.model(inputs_embeds=inputs_embeds,
+                                                  position_ids=position_ids,
+                                                  attention_mask=attention_mask,
+                                                  use_cache=False,
+                                                  past_key_values= None)
         hidden_states = outputs.last_hidden_state
 
         # gather from img tokens
         img_hidden_states = []
         for i in range(b):
-            img_start = lengths[i] - 1
+            img_start = lengths[i] - 2
             img_end = img_start + self.img_token_num
             img_hidden_states.append(hidden_states[i, img_start:img_end, :])
         img_hidden_states = torch.stack(img_hidden_states, dim=0)
@@ -246,7 +255,7 @@ class JanusWarpper(PL.LightningModule):
     def training_step(self, batch, batch_idx):
         self.model.train()
         ce_loss, _ = self.forward(batch) 
-        self.log("train/ce_loss", ce_loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train/loss", ce_loss, prog_bar=True, on_step=True, on_epoch=True)
         return ce_loss
 
     def validation_step(self, batch, batch_idx):
@@ -255,18 +264,19 @@ class JanusWarpper(PL.LightningModule):
         probs = torch.softmax(logits , dim=-1)
         b, s = probs.shape[:2]
         prediction = torch.multinomial(probs.reshape(b * s, -1), num_samples=1).reshape(b, s)
-        dec = vl_gpt.gen_vision_model.decode_code(prediction.to(dtype=torch.int), shape=[1, 8, 24, 24])
+        dec = self.model.gen_vision_model.decode_code(prediction.to(dtype=torch.int), shape=[b, 8, 24, 24])
         dec = torch.clamp((dec + 1) / 2 * 255, 0, 255).to(dtype=torch.uint8)
         real = torch.clamp((batch['img'] + 1) / 2 * 255, 0, 255).to(dtype = torch.uint8)
-        self.log("val/ce_loss", ce_loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("val/loss", ce_loss, prog_bar=True, on_step=True, on_epoch=True)
         self.fid_comp.update(dec, real=False)
         self.fid_comp.update(real, real=True)
         return ce_loss
 
     def on_validation_end(self):
         fid = self.fid_comp.compute()
-        self.log("val/fid", fid, prog_bar=True, on_step=True, on_epoch=True)
+        self.logger.experiment.add_scalar("val/fid", fid.item(), self.global_step)
         self.fid_comp.reset()
+        self.save_checkpoint()
         return super().on_validation_end()
 
     def test_step(self, batch, batch_idx):
@@ -281,18 +291,17 @@ class JanusWarpper(PL.LightningModule):
     
     def on_test_end(self):
         fid = self.fid_comp.compute()
-        self.log('test/fid', fid)
         self.fid_comp.reset()
         print(f"fid = {fid}")
         return super().on_test_end()
 
-    def on_load_checkpoint(self, checkpoint):
+    def load_checkpoint(self, checkpoint):
         self.model.language_model.model.load_state_dict(checkpoint["model"], strict=False)
         self.model.gen_head.load_state_dict(checkpoint["gen_head"])
         self.model.gen_embed.load_state_dict(checkpoint["gen_embed"])
-        return super().on_load_checkpoint(checkpoint)
 
-    def on_save_checkpoint(self, checkpoint):
+    def save_checkpoint(self):
+        checkpoint = {}
         state_dict = {} 
         for name, param in self.model.language_model.named_parameters():
             if param.requires_grad:
@@ -300,7 +309,7 @@ class JanusWarpper(PL.LightningModule):
         checkpoint["model"] = state_dict
         checkpoint["gen_head"] = self.model.gen_head.state_dict()
         checkpoint["gen_embed"] = self.model.gen_embed.state_dict()
-        return super().on_save_checkpoint(checkpoint)
+        torch.save(checkpoint, f"exp/janus-flickr-{self.global_step}.pth")
 
     def configure_optimizers(self):
         params = [
@@ -320,7 +329,7 @@ class JanusWarpper(PL.LightningModule):
                 "name": "gen_embed"
             }
         ]
-        optim = torch.optim.Adam(params)
+        optim = torch.optim.AdamW(params)
         return {
             "optimizer" : optim
         }

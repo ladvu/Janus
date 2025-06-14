@@ -8,9 +8,10 @@ import numpy as np
 import os
 import PIL.Image
 from trainer import JanusWarpper
+from peft import LoraConfig
 
 # specify the path to the model
-model_path = "/root/cvg/project/wcy/project/Janus_IFT/checkpoint"
+model_path = "/root/cvg/project/wcy/project/Janus_IFT/checkpoints/janus_7b"
 vl_chat_processor: VLChatProcessor = VLChatProcessor.from_pretrained(model_path)
 tokenizer = vl_chat_processor.tokenizer
 
@@ -25,10 +26,17 @@ transform = Compose([
             ToTensor(),
             Normalize(0.5, 0.5) 
         ])
-img = PIL.Image.open("/root/cvg/project/wcy/project/Janus_IFT/Janus/generated_samples/img_0.jpg")
-janus = JanusWarpper(vl_gpt, vl_chat_processor, None)
+img = PIL.Image.open("/root/cvg/project/wcy/project/Janus_IFT/flickr30k/flickr30k-images/1002674143.jpg")
+lora_config = LoraConfig(  
+        r=8,  
+        lora_alpha=32,  
+        target_modules=["q_proj", "v_proj"], 
+        lora_dropout=0.05,  
+        bias="none",
+    )
+janus = JanusWarpper(vl_gpt, vl_chat_processor, lora_config, feature_extractor_weights_path="../checkpoints/inceptionv3/inceptionv3.pth")
 batch = {
-    "text" : ["The black dog leaps a pile of driftwood as he runs the beach."],
+    "text" : ["A small girl in the grass plays with fingerpaints in front of a white canvas with a rainbow on it."],
     "img" : transform(img).unsqueeze(0).cuda().to(dtype=torch.bfloat16)
 }
 
@@ -42,7 +50,7 @@ visual_img = np.zeros((1, 384, 384, 3), dtype=np.uint8)
 visual_img[:, :, :] = dec
 os.makedirs('checksamples', exist_ok=True)
 for i in range(1):
-    save_path = os.path.join('checksampels', "img_{}.jpg".format(i))
+    save_path = os.path.join('checksamples', "img_{}.jpg".format(i))
     PIL.Image.fromarray(visual_img[i]).save(save_path)
 
 print(loss)
