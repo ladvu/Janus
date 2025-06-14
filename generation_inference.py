@@ -26,7 +26,7 @@ import os
 import PIL.Image
 
 # specify the path to the model
-model_path = "deepseek-ai/Janus-1.3B"
+model_path = "/root/cvg/project/wcy/project/Janus_IFT/checkpoint"
 vl_chat_processor: VLChatProcessor = VLChatProcessor.from_pretrained(model_path)
 tokenizer = vl_chat_processor.tokenizer
 

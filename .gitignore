@@ -1,4 +1,9 @@
 ##### Python.gitignore #####
+lightning_logs
+test_samples
+checksamples
+**/temp.*
+
 # Byte-compiled / optimized / DLL files
 **/__pycache__/
 *.pyc
