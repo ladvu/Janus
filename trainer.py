@@ -300,7 +300,7 @@ class JanusWarpper(PL.LightningModule):
         return super().on_test_end()
 
     def load_checkpoint(self, checkpoint):
-        self.model.language_model.model.load_state_dict(checkpoint["model"], strict=False)
+        self.model.language_model.load_state_dict(checkpoint["model"], strict=False)
         self.model.gen_head.load_state_dict(checkpoint["gen_head"])
         self.model.gen_embed.load_state_dict(checkpoint["gen_embed"])
 

@@ -29,10 +29,10 @@ if __name__ == "__main__":
     pl_module = JanusWarpper(vl_gpt, vl_chat_processor, lora_config, lr=0.00004, feature_extractor_weights_path="../checkpoints/inceptionv3/inceptionv3.pth")
     pl_module.set_output_dir("original")
     # uncomment this line to test original model in fid
-    # pl_module.load_checkpoint(
-    #     torch.load(finetune_model_path, map_location='cpu')
-    # )
-    # pl_module.set_output_dir("finetune")
+    pl_module.load_checkpoint(
+        torch.load(finetune_model_path, map_location='cpu')
+    )
+    pl_module.set_output_dir("finetune")
     datamodule = FlickrWarpper(dataroot, batch_size=12)
 
     trainer = Trainer(
