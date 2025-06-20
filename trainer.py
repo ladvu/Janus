@@ -143,7 +143,7 @@ class FlickrWarpper(PL.LightningDataModule):
         return DataLoader(
             FlickrDataset(self.root, self.df, "test", self.resolution),
             batch_size=1,
-            shuffle=True,
+            shuffle=False,
             num_workers=32,
             collate_fn=collate_fn
         )
