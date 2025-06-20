@@ -37,7 +37,8 @@ def generate(
     image_token_num_per_image: int = 576,
     img_size: int = 384,
     patch_size: int = 16,
-    step:int = 0
+    step:int = 0,
+    mode:str = "train"
 ):
     input_ids = vl_chat_processor.tokenizer.encode(prompt)
     input_ids = torch.LongTensor(input_ids)
@@ -78,10 +79,10 @@ def generate(
 
     visual_img = np.zeros((parallel_size, img_size, img_size, 3), dtype=np.uint8)
     visual_img[:, :, :] = dec
-
-    os.makedirs('generated_samples', exist_ok=True)
+    save_dir = os.path.join('generated_samples', mode)
+    os.makedirs(save_dir, exist_ok=True)
     for i in range(parallel_size):
-        save_path = os.path.join('generated_samples', "{}_img_{}.jpg".format(step, i))
+        save_path = os.path.join(save_dir, "{}_img_{}.jpg".format(step, i))
         PIL.Image.fromarray(visual_img[i]).save(save_path)
     return visual_img
 
@@ -174,7 +175,7 @@ class JanusWarpper(PL.LightningModule):
         self.model.gen_head.requires_grad_(True)
         self.model.gen_embed.requires_grad_(True)
 
-        self.fid_comp = FrechetInceptionDistance(feature=768,
+        self.fid_comp = FrechetInceptionDistance(feature=2048,
                                        feature_extractor_weights_path=feature_extractor_weights_path)
 
     @torch.no_grad() 
@@ -283,11 +284,14 @@ class JanusWarpper(PL.LightningModule):
 
         text = batch['text'][0]
         text = self.text_preprocess(text)
-        pred_img = generate(self.model, self.tokenizer, text, parallel_size=1)
-        pred_img = torch.from_numpy(pred_img).unsqueeze(0).permute(0,3,1,2).to(batch['img'].device)
+        pred_img = generate(self.model, self.tokenizer, text, parallel_size=1, step=batch_idx, mode=self.output_dir)
+        pred_img = torch.from_numpy(pred_img).permute(0,3,1,2).to(batch['img'].device)
         real = torch.clamp((batch['img'] + 1) / 2 * 255, 0, 255).to(dtype = torch.uint8)
         self.fid_comp.update(pred_img, real=False)
         self.fid_comp.update(real, real=True)
+
+    def set_output_dir(self, output_dir):
+        self.output_dir = output_dir
     
     def on_test_end(self):
         fid = self.fid_comp.compute()
